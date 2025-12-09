@@ -43,14 +43,30 @@ func (d *SimpleDirector) Direct(req *http.Request) (*http.Request, RouteMetadata
 	outReq.Host = route.Upstream.Host
 	outReq.RequestURI = ""
 
-	if ip, _, err := net.SplitHostPort(req.RemoteAddr); err != nil {
-		prior := req.Header.Get("X-Forwarded-For")
-		if prior != "" {
-			outReq.Header.Set("X-Forwarded-For", prior+", "+ip)
-		} else {
-			outReq.Header.Set("X-Forwarded-For", ip)
+	rawAddr := req.RemoteAddr
+
+	if strings.Contains(rawAddr, "://") {
+		if parts := strings.SplitN(rawAddr, "://", 2); len(parts) == 2 {
+			rawAddr = parts[1]
 		}
 	}
+
+	clientIp := ""
+	if host, _, err := net.SplitHostPort(rawAddr); err == nil {
+		clientIp = host
+	} else if strings.Contains(err.Error(), "missing port in address") {
+		clientIp = req.RemoteAddr
+	}
+
+	if clientIp != "" {
+		prior := req.Header.Get("X-Forwarded-For")
+		if prior != "" {
+			outReq.Header.Set("X-Forwarded-For", prior+", "+clientIp)
+		} else {
+			outReq.Header.Set("X-Forwarded-For", clientIp)
+		}
+	}
+
 	meta := RouteMetadata{
 		UpstreamName: route.Upstream.Host,
 		CacheEnabled: route.CacheEnabled,
