@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"warpgate/internal/cache"
+	"warpgate/internal/cluster"
 	"warpgate/internal/config"
 	"warpgate/internal/logging"
 	"warpgate/internal/metrics"
@@ -28,16 +29,28 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	var routes []proxy.SimpleRoute
+	clusters := make(map[string]cluster.Cluster)
 
-	for _, r := range cfg.Routes {
-		u, err := url.Parse(r.Upstream)
-		if err != nil {
-			log.Fatalf("parse upstream for route %s: %v", r.Name, err)
+	for _, c := range cfg.Clusters {
+		var endpoints []*cluster.Endpoint
+		for _, raw := range c.Endpoints {
+			u, err := url.Parse(raw)
+			if err != nil {
+				log.Fatalf("parse endpoint %q for cluster %s: %v", raw, c.Name, err)
+			}
+			endpoints = append(endpoints, &cluster.Endpoint{
+				URL:   u,
+				Alive: true,
+			})
 		}
+		clusters[c.Name] = cluster.NewRoundRobinCluster(c.Name, endpoints)
+	}
+
+	var routes []proxy.SimpleRoute
+	for _, r := range cfg.Routes {
 		routes = append(routes, proxy.SimpleRoute{
 			Prefix:       r.PathPrefix,
-			Upstream:     u,
+			ClusterName:  r.Cluster,
 			CacheEnabled: cfg.RouteCacheEnabled(r),
 			CacheTTL:     cfg.RouteTTL(r),
 		})
@@ -50,7 +63,7 @@ func main() {
 	transport := upstream.NewTransport()
 
 	memCache := cache.NewInMemoryCache(cfg.Cache.MaxEntries)
-	engine := proxy.NewEngine(director, memCache, transport, logger)
+	engine := proxy.NewEngine(director, memCache, transport, clusters, logger)
 	engine.MaxCacheBodySize = cfg.Cache.MaxBodyBytes
 
 	mux := http.NewServeMux()

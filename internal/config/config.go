@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig  `yaml:"server"`
-	Cache  CacheConfig   `yaml:"cache"`
-	Routes []RouteConfig `yaml:"routes"`
+	Server   ServerConfig    `yaml:"server"`
+	Cache    CacheConfig     `yaml:"cache"`
+	Clusters []ClusterConfig `yaml:"clusters"`
+	Routes   []RouteConfig   `yaml:"routes"`
 }
 
 type ServerConfig struct {
@@ -31,10 +32,15 @@ type CacheConfig struct {
 	MaxBodyBytes int64         `yaml:"maxBodyBytes"`
 }
 
+type ClusterConfig struct {
+	Name      string   `yaml:"name"`
+	Endpoints []string `yaml:"endpoints"`
+}
+
 type RouteConfig struct {
 	Name       string            `yaml:"name"`
 	PathPrefix string            `yaml:"pathPrefix"`
-	Upstream   string            `yaml:"upstream"`
+	Cluster    string            `yaml:"cluster"`
 	Cache      *RouteCacheConfig `yaml:"cache,omitempty"`
 }
 

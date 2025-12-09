@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"warpgate/internal/cache"
+	"warpgate/internal/cluster"
 	"warpgate/internal/logging"
 	"warpgate/internal/metrics"
 )
@@ -19,7 +20,8 @@ type Director interface {
 }
 
 type RouteMetadata struct {
-	UpstreamName string
+	RouteName    string
+	ClusterName  string
 	CacheEnabled bool
 	CacheTTL     time.Duration
 }
@@ -34,15 +36,17 @@ type Engine struct {
 	Transport        Transport
 	MaxCacheBodySize int64
 	Logger           logging.Logger
+	Clusters         map[string]cluster.Cluster
 }
 
-func NewEngine(d Director, c cache.Cache, t Transport, l logging.Logger) *Engine {
+func NewEngine(d Director, c cache.Cache, t Transport, clusters map[string]cluster.Cluster, l logging.Logger) *Engine {
 	return &Engine{
 		Director:         d,
 		Cache:            c,
 		Transport:        t,
 		MaxCacheBodySize: 1 << 20,
 		Logger:           l,
+		Clusters:         clusters,
 	}
 }
 
@@ -60,12 +64,32 @@ func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				"err", err,
 			)
 		}
-		metrics.ObserveRequest(meta.UpstreamName, req.Method, fmt.Sprint(http.StatusBadGateway), time.Since(start))
+		metrics.ObserveRequest(meta.ClusterName, req.Method, fmt.Sprint(http.StatusBadGateway), time.Since(start))
 		return
 	}
 
+	cl, ok := e.Clusters[meta.ClusterName]
+	if !ok {
+		http.Error(rw, fmt.Sprintf("no such cluster: %s", meta.ClusterName), http.StatusBadGateway)
+		metrics.ObserveRequest(meta.ClusterName, req.Method, fmt.Sprint(http.StatusBadGateway), time.Since(start))
+		return
+	}
+
+	endpoint, err := cl.PickEndpoint()
+	if err != nil {
+		http.Error(rw, fmt.Sprintf("no available endpoint in cluster: %s", meta.ClusterName), http.StatusBadGateway)
+		metrics.ObserveRequest(meta.ClusterName, req.Method, fmt.Sprint(http.StatusBadGateway), time.Since(start))
+		return
+	}
+
+	targetUrl := endpoint.URL
+	outReq.URL.Scheme = targetUrl.Scheme
+	outReq.URL.Host = targetUrl.Host
+	outReq.Host = targetUrl.Host
+	outReq.RequestURI = ""
+
 	cacheableMethod := outReq.Method == http.MethodGet || outReq.Method == http.MethodHead
-	routeLabel := meta.UpstreamName
+	routeLabel := meta.ClusterName
 
 	if meta.CacheEnabled && cacheableMethod {
 		if ok := e.serveFromCache(ctx, rw, outReq, routeLabel, start); ok {

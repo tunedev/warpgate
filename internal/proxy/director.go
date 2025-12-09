@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
 type SimpleRoute struct {
 	Prefix       string
-	Upstream     *url.URL
+	ClusterName  string
 	CacheEnabled bool
 	CacheTTL     time.Duration
 }
@@ -37,20 +36,12 @@ func (d *SimpleDirector) Direct(req *http.Request) (*http.Request, RouteMetadata
 	}
 
 	outReq := req.Clone(req.Context())
-
-	outReq.URL.Scheme = route.Upstream.Scheme
-	outReq.URL.Host = route.Upstream.Host
-	outReq.Host = route.Upstream.Host
-	outReq.RequestURI = ""
-
 	rawAddr := req.RemoteAddr
-
 	if strings.Contains(rawAddr, "://") {
 		if parts := strings.SplitN(rawAddr, "://", 2); len(parts) == 2 {
 			rawAddr = parts[1]
 		}
 	}
-
 	clientIp := ""
 	if host, _, err := net.SplitHostPort(rawAddr); err == nil {
 		clientIp = host
@@ -68,7 +59,8 @@ func (d *SimpleDirector) Direct(req *http.Request) (*http.Request, RouteMetadata
 	}
 
 	meta := RouteMetadata{
-		UpstreamName: route.Upstream.Host,
+		RouteName:    route.Prefix,
+		ClusterName:  route.ClusterName,
 		CacheEnabled: route.CacheEnabled,
 		CacheTTL:     route.CacheTTL,
 	}

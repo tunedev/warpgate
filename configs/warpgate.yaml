@@ -1,7 +1,7 @@
 server:
   address: ":8080"
   tls:
-    enabled: false
+    enabled: true
     certFile: "cert.pem"
     keyFile: "key.pem"
 
@@ -10,15 +10,27 @@ cache:
   defaultTTL: 30s
   maxBodyBytes: 1048576
 
+clusters:
+- name: demo_cluster
+  endpoint:
+  - "https://172.17.0.2"
+  - "https://172.17.0.3"
+
+- name: api_cluster
+  endpoints:
+  - "https://localhost:9000"
+
+
 routes:
   - name: demo
     pathPrefix: "/"
-    upstream: "https://172.17.0.2"
+    cluster: "demo_cluster"
     cache:
       enabled: true
       ttl: 10s
+
   - name: api
     pathPrefix: "/api"
-    upstream: "https://localhost:9000"
+    cluster: "api_cluster"
     cache:
       enabled: false

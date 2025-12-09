@@ -2,18 +2,16 @@ package proxy_test
 
 import (
 	"net/http"
-	"net/url"
 	"testing"
 	"time"
 	"warpgate/internal/proxy"
 )
 
 func TestSimpleDirector_PrefixMatch(t *testing.T) {
-	u, _ := url.Parse("https://backend.local")
 	d := proxy.NewSimpleDirector([]proxy.SimpleRoute{
 		{
 			Prefix:       "/api",
-			Upstream:     u,
+			ClusterName:  "demo_cluster",
 			CacheEnabled: true,
 			CacheTTL:     10 * time.Second,
 		},
@@ -27,16 +25,8 @@ func TestSimpleDirector_PrefixMatch(t *testing.T) {
 		t.Fatalf("unexpected error %v", err)
 	}
 
-	if outReq.URL.Scheme != "https" || outReq.URL.Host != "backend.local" {
-		t.Errorf("expected Host to be upstream host, fot %s", outReq.Host)
-	}
-
-	if outReq.RequestURI != "" {
-		t.Errorf("expected RequestURI to be empty, got %q", outReq.RequestURI)
-	}
-
-	if meta.UpstreamName != "backend.local" {
-		t.Errorf("unexpected UpstreamName: %s", meta.UpstreamName)
+	if meta.ClusterName != "demo_cluster" {
+		t.Errorf("unexpected ClusterName=demo_cluster: %s", meta.ClusterName)
 	}
 	if !meta.CacheEnabled {
 		t.Errorf("expeted CacheEnabled to be true")
@@ -44,15 +34,18 @@ func TestSimpleDirector_PrefixMatch(t *testing.T) {
 	if meta.CacheTTL != 10*time.Second {
 		t.Errorf("unexpected CacheTTl: %v", meta.CacheTTL)
 	}
+	if meta.RouteName != "/api" {
+		t.Errorf("expected RouteName=/api, got %q", meta.RouteName)
+	}
+
 	if got := outReq.Header.Get("X-Forwarded-For"); got != "10.0.0.1" {
 		t.Errorf("expected X-Forwarded-For=10.0.0.1, got %q", got)
 	}
 }
 
 func TestSimpleDirector_NoRoute(t *testing.T) {
-	u, _ := url.Parse("https://backend.local")
 	d := proxy.NewSimpleDirector([]proxy.SimpleRoute{
-		{Prefix: "/api", Upstream: u},
+		{Prefix: "/api", ClusterName: "api_cluster"},
 	})
 
 	req, _ := http.NewRequest(http.MethodGet, "https://example.com/other", nil)
@@ -63,64 +56,32 @@ func TestSimpleDirector_NoRoute(t *testing.T) {
 }
 
 func TestSimpleDirector_RoutingPriority(t *testing.T) {
-	u1, _ := url.Parse("https://backend-specific.local")
-	u2, _ := url.Parse("https://backend-general.local")
-
 	d := proxy.NewSimpleDirector([]proxy.SimpleRoute{
-		{Prefix: "/api/users", Upstream: u1, CacheEnabled: true},
-		{Prefix: "/api", Upstream: u2, CacheEnabled: false},
+		{Prefix: "/api/users", ClusterName: "users_cluster", CacheEnabled: true},
+		{Prefix: "/api", ClusterName: "api_cluster", CacheEnabled: false},
 	})
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com/api/users/123", nil)
-	outReq, meta, err := d.Direct(req)
-
+	_, meta, err := d.Direct(req)
 	if err != nil {
 		t.Fatalf("enexpected error: %v", err)
 	}
 
-	if outReq.URL.Host != "backend-specific.local" {
-		t.Errorf("expected Upstream Host 'backend-specific.local', got %s", outReq.URL.Host)
+	if meta.RouteName != "/api/users" {
+		t.Errorf("expected RouteName=/api/users, got %q", meta.RouteName)
 	}
+	if meta.ClusterName != "users_cluster" {
+		t.Errorf("expected ClusterName=users_cluster, got %q", meta.ClusterName)
+	}
+
 	if !meta.CacheEnabled {
 		t.Errorf("expected CachedEnabled to be true from specific route")
 	}
 }
 
-func TestSimpleDirector_RewriteAndPathPreservation(t *testing.T) {
-	upstreamURL, _ := url.Parse("https://new-host:8080")
-	d := proxy.NewSimpleDirector([]proxy.SimpleRoute{
-		{Prefix: "/admin", Upstream: upstreamURL},
-	})
-
-	req, _ := http.NewRequest(http.MethodGet, "http://old-host.com:80/admin/dashboard?q=test", nil)
-	req.RequestURI = "/admin/dashboard?q=test"
-
-	outReq, _, err := d.Direct(req)
-	if err != nil {
-		t.Fatalf("unexpected error %v", err)
-	}
-
-	if outReq.URL.Scheme != "https" || outReq.URL.Host != "new-host:8080" {
-		t.Errorf("URL tranformation incorrect. Got %s://%s, expectedhttps://new-host:8080", outReq.URL.Scheme, outReq.URL.Host)
-	}
-
-	if outReq.Host != "new-host:8080" {
-		t.Errorf("Host header incorrect. Got %s, expected new-host:8080", outReq.Host)
-	}
-
-	if outReq.URL.Path != "/admin/dashboard" {
-		t.Errorf("Path was not preserved. Got %s, expected /admin/dashboard", outReq.URL.Path)
-	}
-
-	if outReq.RequestURI != "" {
-		t.Errorf("RequestURI was not cleard. Got %q, expected\"\"", outReq.RequestURI)
-	}
-}
-
 func TestSimpleDirector_XForwarwardedFor_Appending(t *testing.T) {
-	u, _ := url.Parse("https://backend.local")
 	d := proxy.NewSimpleDirector([]proxy.SimpleRoute{
-		{Prefix: "/", Upstream: u},
+		{Prefix: "/", ClusterName: "default"},
 	})
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com/", nil)
