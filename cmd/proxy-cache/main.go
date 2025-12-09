@@ -17,7 +17,7 @@ import (
 func main() {
 	upstreamURL, err := url.Parse("https://172.17.0.2")
 	if err != nil {
-		log.Fatal("parse upstream: %v", err)
+		log.Fatalf("parse upstream: %v", err)
 	}
 
 	director := proxy.NewSimpleDirector([]proxy.SimpleRoute{
