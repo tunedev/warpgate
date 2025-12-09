@@ -1,0 +1,24 @@
+server:
+  address: ":8080"
+  tls:
+    enabled: false
+    certFile: "cert.pem"
+    keyFile: "key.pem"
+
+cache:
+  maxEntries: 1000
+  defaultTTL: 30s
+  maxBodyBytes: 1048576
+
+routes:
+  - name: demo
+    pathPrefix: "/"
+    upstream: "https://172.17.0.2"
+    cache:
+      enabled: true
+      ttl: 10s
+  - name: api
+    pathPrefix: "/api"
+    upstream: "https://localhost:9000"
+    cache:
+      enabled: false

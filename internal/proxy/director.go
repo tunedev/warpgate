@@ -6,13 +6,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type SimpleRoute struct {
 	Prefix       string
 	Upstream     *url.URL
 	CacheEnabled bool
-	CacheTTL     int64
+	CacheTTL     time.Duration
 }
 
 type SimpleDirector struct {

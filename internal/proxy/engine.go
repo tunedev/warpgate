@@ -19,7 +19,7 @@ type Director interface {
 type RouteMetadata struct {
 	UpstreamName string
 	CacheEnabled bool
-	CacheTTL     int64
+	CacheTTL     time.Duration
 }
 
 type Transport interface {
@@ -199,7 +199,7 @@ func isCacheableResponse(resp *http.Response) bool {
 	return true
 }
 
-func computeExpiry(resp *http.Response, routeTTLSeconds int64) time.Time {
+func computeExpiry(resp *http.Response, routeTTL time.Duration) time.Time {
 	now := time.Now()
 
 	cc := resp.Header.Get("Cache-Control")
@@ -213,8 +213,8 @@ func computeExpiry(resp *http.Response, routeTTLSeconds int64) time.Time {
 		}
 	}
 
-	if routeTTLSeconds > 0 {
-		return now.Add(time.Duration(routeTTLSeconds) * time.Second)
+	if routeTTL > 0 {
+		return now.Add(routeTTL)
 	}
 
 	return time.Time{}
