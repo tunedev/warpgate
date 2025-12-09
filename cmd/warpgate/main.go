@@ -13,6 +13,8 @@ import (
 
 	"warpgate/internal/cache"
 	"warpgate/internal/config"
+	"warpgate/internal/logging"
+	"warpgate/internal/metrics"
 	"warpgate/internal/proxy"
 	"warpgate/internal/upstream"
 )
@@ -41,16 +43,23 @@ func main() {
 		})
 	}
 
+	metrics.Init()
+
+	logger := logging.New()
 	director := proxy.NewSimpleDirector(routes)
 	transport := upstream.NewTransport()
 
 	memCache := cache.NewInMemoryCache(cfg.Cache.MaxEntries)
-	engine := proxy.NewEngine(director, memCache, transport)
+	engine := proxy.NewEngine(director, memCache, transport, logger)
 	engine.MaxCacheBodySize = cfg.Cache.MaxBodyBytes
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+	mux.Handle("/", engine)
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Address,
-		Handler: engine,
+		Handler: mux,
 	}
 
 	go func() {

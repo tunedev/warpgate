@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"warpgate/internal/cache"
+	"warpgate/internal/logging"
+	"warpgate/internal/metrics"
 )
 
 type Director interface {
@@ -31,30 +33,42 @@ type Engine struct {
 	Cache            cache.Cache
 	Transport        Transport
 	MaxCacheBodySize int64
+	Logger           logging.Logger
 }
 
-func NewEngine(d Director, c cache.Cache, t Transport) *Engine {
+func NewEngine(d Director, c cache.Cache, t Transport, l logging.Logger) *Engine {
 	return &Engine{
 		Director:         d,
 		Cache:            c,
 		Transport:        t,
 		MaxCacheBodySize: 1 << 20,
+		Logger:           l,
 	}
 }
 
 func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
+	start := time.Now()
 
 	outReq, meta, err := e.Director.Direct(req)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadGateway)
+		if e.Logger != nil {
+			e.Logger.Error("director error",
+				"method", req.Method,
+				"path", req.URL.Path,
+				"err", err,
+			)
+		}
+		metrics.ObserveRequest(meta.UpstreamName, req.Method, fmt.Sprint(http.StatusBadGateway), time.Since(start))
 		return
 	}
 
 	cacheableMethod := outReq.Method == http.MethodGet || outReq.Method == http.MethodHead
+	routeLabel := meta.UpstreamName
 
 	if meta.CacheEnabled && cacheableMethod {
-		if ok := e.serveFromCache(ctx, rw, outReq); ok {
+		if ok := e.serveFromCache(ctx, rw, outReq, routeLabel, start); ok {
 			return
 		}
 	}
@@ -62,9 +76,19 @@ func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	resp, err := e.Transport.RoundTrip(outReq)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadGateway)
+		if e.Logger != nil {
+			e.Logger.Error("upstream error",
+				"method", outReq.Method,
+				"url", outReq.URL.String(),
+				"err", err,
+			)
+		}
+		metrics.ObserveRequest(routeLabel, req.Method, fmt.Sprint(http.StatusBadGateway), time.Since(start))
 		return
 	}
 	defer resp.Body.Close()
+
+	statusCode := resp.StatusCode
 
 	copyHeader(rw.Header(), resp.Header)
 
@@ -123,6 +147,19 @@ func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	close(done)
 
+	duration := time.Since(start)
+	metrics.ObserveRequest(routeLabel, req.Method, fmt.Sprint(statusCode), duration)
+	if e.Logger != nil {
+		e.Logger.Info("proxy request",
+			"method", req.Method,
+			"path", req.URL.Path,
+			"status", statusCode,
+			"upstream", routeLabel,
+			"cacheEnabled", meta.CacheEnabled,
+			"duration_ms", duration.Milliseconds(),
+		)
+	}
+
 	if shouldCache && copyErr == nil && e.Cache != nil {
 		if int64(buf.Len()) <= e.MaxCacheBodySize {
 			expiry := computeExpiry(resp, meta.CacheTTL)
@@ -136,13 +173,9 @@ func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-
-	if copyErr != nil {
-		fmt.Println("copy error", copyErr)
-	}
 }
 
-func (e *Engine) serveFromCache(ctx context.Context, rw http.ResponseWriter, req *http.Request) bool {
+func (e *Engine) serveFromCache(ctx context.Context, rw http.ResponseWriter, req *http.Request, routeLabel string, start time.Time) bool {
 	if e.Cache == nil {
 		return false
 	}
@@ -150,13 +183,27 @@ func (e *Engine) serveFromCache(ctx context.Context, rw http.ResponseWriter, req
 	key := cacheKeyFromRequest(req)
 	cached, ok := e.Cache.Get(ctx, key)
 	if !ok {
+		metrics.IncCacheMiss(routeLabel)
 		return false
 	}
 
 	copyHeader(rw.Header(), cached.Header)
 	rw.WriteHeader(cached.StatusCode)
-
 	_, _ = rw.Write(cached.Body)
+
+	duration := time.Since(start)
+	metrics.ObserveRequest(routeLabel, req.Method, fmt.Sprint(cached.StatusCode), duration)
+	metrics.IncCacheHit(routeLabel)
+
+	if e.Logger != nil {
+		e.Logger.Info("cache hit",
+			"method", req.Method,
+			"path", req.URL.Path,
+			"status", cached.StatusCode,
+			"upstream", routeLabel,
+			"duration_ms", duration.Milliseconds(),
+		)
+	}
 	return true
 }
 
