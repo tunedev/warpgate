@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"warpgate/internal/cache"
 	"warpgate/internal/proxy"
 	"warpgate/internal/upstream"
 )
@@ -29,7 +30,8 @@ func main() {
 		},
 	})
 	transport := upstream.NewTransport()
-	engine := proxy.NewEngine(director, nil, transport)
+	memoryCache := cache.NewInMemoryCache(1000)
+	engine := proxy.NewEngine(director, memoryCache, transport)
 
 	srv := &http.Server{
 		Addr:    ":8080",
