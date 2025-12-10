@@ -5,7 +5,7 @@ Warpgate is a small HTTP reverse proxy written in Go
 - Route -> Cluster -> Endpoint model
 - Round-robin load balancing
 - Active health checks + basic circuit breaker
-- Respinse caching
+- Response caching
 - Structured logging and metrics
 - Middleware chaining (IP filter)
 - Multi-listener support with HTTP -> HTTPS redirect
