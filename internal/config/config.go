@@ -16,8 +16,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Address string    `yaml:"address"`
-	TLS     TLSConfig `yaml:"tls"`
+	Address      string    `yaml:"address"`
+	TLS          TLSConfig `yaml:"tls"`
+	IPBlockCIDRS []string  `yaml:"ipBlockCIDRS,omitempty"`
 }
 
 type TLSConfig struct {

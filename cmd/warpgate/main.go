@@ -16,6 +16,7 @@ import (
 	"warpgate/internal/config"
 	"warpgate/internal/logging"
 	"warpgate/internal/metrics"
+	"warpgate/internal/middleware"
 	"warpgate/internal/proxy"
 	"warpgate/internal/upstream"
 )
@@ -92,9 +93,22 @@ func main() {
 	engine := proxy.NewEngine(director, memCache, transport, clusters, logger)
 	engine.MaxCacheBodySize = cfg.Cache.MaxBodyBytes
 
+	var mws []middleware.Middleware
+
+	if len(cfg.Server.IPBlockCIDRS) > 0 {
+		ipMw, err := middleware.IPFilter(logger, cfg.Server.IPBlockCIDRS)
+		if err != nil {
+			log.Fatalf("invalid ipBlockCIDRS: %v", err)
+		}
+		mws = append(mws, ipMw)
+	}
+
+	var handler http.Handler = engine
+	handler = middleware.Chain(handler, mws...)
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metrics.Handler())
-	mux.Handle("/", engine)
+	mux.Handle("/", handler)
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Address,
