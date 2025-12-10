@@ -33,8 +33,23 @@ type CacheConfig struct {
 }
 
 type ClusterConfig struct {
-	Name      string   `yaml:"name"`
-	Endpoints []string `yaml:"endpoints"`
+	Name           string                `yaml:"name"`
+	Endpoints      []string              `yaml:"endpoints"`
+	HealthCheck    *HealthCheckConfig    `yaml:"healthCheck,omitempty"`
+	CircuitBreaker *CircuitBreakerConfig `yaml:"circuitBreaker,omitempty"`
+}
+
+type HealthCheckConfig struct {
+	Path               string        `yaml:"path"`
+	Interval           time.Duration `yaml:"interval"`
+	Timeout            time.Duration `yaml:"timeout"`
+	UnhealthyThreshold int           `yaml:"unhealthyThreshold"`
+	HealthyThreshold   int           `yaml:"healthyThreshold"`
+}
+
+type CircuitBreakerConfig struct {
+	ConsecutiveFailures int           `yaml:"consecutiveFailures"`
+	Cooldown            time.Duration `yaml:"cooldown"`
 }
 
 type RouteConfig struct {
@@ -70,6 +85,34 @@ func Load(path string) (*Config, error) {
 
 	if cfg.Cache.MaxBodyBytes <= 0 {
 		cfg.Cache.MaxBodyBytes = 1 << 20 // 1 MiB
+	}
+
+	for i := range cfg.Clusters {
+		hc := cfg.Clusters[i].HealthCheck
+		if hc != nil {
+			if hc.Interval <= 0 {
+				hc.Interval = 10 * time.Second
+			}
+			if hc.Timeout <= 0 {
+				hc.Timeout = 1 * time.Second
+			}
+			if hc.UnhealthyThreshold <= 0 {
+				hc.UnhealthyThreshold = 3
+			}
+			if hc.HealthyThreshold <= 0 {
+				hc.HealthyThreshold = 1
+			}
+		}
+
+		cb := cfg.Clusters[i].CircuitBreaker
+		if cb != nil {
+			if cb.ConsecutiveFailures <= 0 {
+				cb.ConsecutiveFailures = 5
+			}
+			if cb.Cooldown <= 0 {
+				cb.Cooldown = 30 * time.Second
+			}
+		}
 	}
 
 	return &cfg, nil

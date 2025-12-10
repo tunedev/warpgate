@@ -29,6 +29,9 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+
 	clusters := make(map[string]cluster.Cluster)
 
 	for _, c := range cfg.Clusters {
@@ -39,11 +42,29 @@ func main() {
 				log.Fatalf("parse endpoint %q for cluster %s: %v", raw, c.Name, err)
 			}
 			endpoints = append(endpoints, &cluster.Endpoint{
-				URL:   u,
-				Alive: true,
+				URL: u,
 			})
 		}
-		clusters[c.Name] = cluster.NewRoundRobinCluster(c.Name, endpoints)
+		var hc *cluster.HealthCheckConfig
+		if c.HealthCheck != nil {
+			hc = &cluster.HealthCheckConfig{
+				Path:               c.HealthCheck.Path,
+				Interval:           c.HealthCheck.Interval,
+				Timeout:            c.HealthCheck.Timeout,
+				UnhealthyThreshold: c.HealthCheck.UnhealthyThreshold,
+				HealthyThreshold:   c.HealthCheck.HealthyThreshold,
+			}
+		}
+
+		var cb *cluster.CircuitBreakerConfig
+		if c.CircuitBreaker != nil {
+			cb = &cluster.CircuitBreakerConfig{
+				ConsecutiveFailures: c.CircuitBreaker.ConsecutiveFailures,
+				Cooldown:            c.CircuitBreaker.Cooldown,
+			}
+		}
+
+		clusters[c.Name] = cluster.NewRoundRobinCluster(c.Name, endpoints, hc, cb)
 	}
 
 	var routes []proxy.SimpleRoute
@@ -54,6 +75,11 @@ func main() {
 			CacheEnabled: cfg.RouteCacheEnabled(r),
 			CacheTTL:     cfg.RouteTTL(r),
 		})
+	}
+
+	healthClient := &http.Client{}
+	for _, cl := range clusters {
+		cl.StartHealthChecks(bgCtx, healthClient)
 	}
 
 	metrics.Init()

@@ -13,8 +13,17 @@ cache:
 clusters:
 - name: demo_cluster
   endpoint:
-  - "https://172.17.0.2"
-  - "https://172.17.0.3"
+    - "https://172.17.0.2"
+    - "https://172.17.0.3"
+  healthCheck:
+    path: "/health"
+    interval: 5s
+    timeout: 1s
+    unhealthyThreshold: 3
+    healthyThreshold: 2
+  circuitBreaker:
+    consecutiveFailures: 5
+    cooldown: 30s
 
 - name: api_cluster
   endpoints:

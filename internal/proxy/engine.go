@@ -99,6 +99,8 @@ func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := e.Transport.RoundTrip(outReq)
 	if err != nil {
+		cl.ReportFailure(endpoint)
+
 		http.Error(rw, err.Error(), http.StatusBadGateway)
 		if e.Logger != nil {
 			e.Logger.Error("upstream error",
@@ -113,6 +115,12 @@ func (e *Engine) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	defer resp.Body.Close()
 
 	statusCode := resp.StatusCode
+
+	if statusCode >= 500 {
+		cl.ReportFailure(endpoint)
+	} else {
+		cl.ReportSuccess(endpoint)
+	}
 
 	copyHeader(rw.Header(), resp.Header)
 

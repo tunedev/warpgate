@@ -45,10 +45,19 @@ var (
 		},
 		[]string{"route"},
 	)
+
+	clusterUnhealthy = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "warpgate",
+			Name:      "cluster_unhealthy_endpoints",
+			Help:      "Number of unhealthy endpoints per cluster",
+		},
+		[]string{"cluster"},
+	)
 )
 
 func Init() {
-	prometheus.MustRegister(requestTotal, requestDuration, cacheHits, cacheMisses)
+	prometheus.MustRegister(requestTotal, requestDuration, cacheHits, cacheMisses, clusterUnhealthy)
 }
 
 func Handler() http.Handler {
@@ -66,4 +75,8 @@ func IncCacheHit(route string) {
 
 func IncCacheMiss(route string) {
 	cacheMisses.WithLabelValues(route).Inc()
+}
+
+func SetClusterUnhealthy(cluster string, value float64) {
+	clusterUnhealthy.WithLabelValues(cluster).Set(value)
 }
