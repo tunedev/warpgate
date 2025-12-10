@@ -5,20 +5,16 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
-	"warpgate/internal/cache"
-	"warpgate/internal/cluster"
 	"warpgate/internal/config"
 	"warpgate/internal/logging"
 	"warpgate/internal/metrics"
-	"warpgate/internal/middleware"
 	"warpgate/internal/proxy"
-	"warpgate/internal/upstream"
 )
 
 func main() {
@@ -30,114 +26,63 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	metrics.Init()
+	logger := logging.New()
+
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
-	clusters := make(map[string]cluster.Cluster)
-
-	for _, c := range cfg.Clusters {
-		var endpoints []*cluster.Endpoint
-		for _, raw := range c.Endpoints {
-			u, err := url.Parse(raw)
-			if err != nil {
-				log.Fatalf("parse endpoint %q for cluster %s: %v", raw, c.Name, err)
-			}
-			endpoints = append(endpoints, &cluster.Endpoint{
-				URL: u,
-			})
-		}
-		var hc *cluster.HealthCheckConfig
-		if c.HealthCheck != nil {
-			hc = &cluster.HealthCheckConfig{
-				Path:               c.HealthCheck.Path,
-				Interval:           c.HealthCheck.Interval,
-				Timeout:            c.HealthCheck.Timeout,
-				UnhealthyThreshold: c.HealthCheck.UnhealthyThreshold,
-				HealthyThreshold:   c.HealthCheck.HealthyThreshold,
-			}
-		}
-
-		var cb *cluster.CircuitBreakerConfig
-		if c.CircuitBreaker != nil {
-			cb = &cluster.CircuitBreakerConfig{
-				ConsecutiveFailures: c.CircuitBreaker.ConsecutiveFailures,
-				Cooldown:            c.CircuitBreaker.Cooldown,
-			}
-		}
-
-		clusters[c.Name] = cluster.NewRoundRobinCluster(c.Name, endpoints, hc, cb)
+	builder := proxy.NewBuilder(cfg, logger)
+	listeners, err := builder.Build(bgCtx)
+	if err != nil {
+		log.Fatalf("build proxy: %v", err)
 	}
 
-	var routes []proxy.SimpleRoute
-	for _, r := range cfg.Routes {
-		routes = append(routes, proxy.SimpleRoute{
-			Prefix:       r.PathPrefix,
-			ClusterName:  r.Cluster,
-			CacheEnabled: cfg.RouteCacheEnabled(r),
-			CacheTTL:     cfg.RouteTTL(r),
-		})
-	}
+	var wg sync.WaitGroup
 
-	healthClient := &http.Client{}
-	for _, cl := range clusters {
-		cl.StartHealthChecks(bgCtx, healthClient)
-	}
+	for _, ls := range listeners {
+		wg.Add(1)
 
-	metrics.Init()
+		go func(ls *proxy.ListenerServer) {
+			defer wg.Done()
 
-	logger := logging.New()
-	director := proxy.NewSimpleDirector(routes)
-	transport := upstream.NewTransport()
-
-	memCache := cache.NewInMemoryCache(cfg.Cache.MaxEntries)
-	engine := proxy.NewEngine(director, memCache, transport, clusters, logger)
-	engine.MaxCacheBodySize = cfg.Cache.MaxBodyBytes
-
-	var mws []middleware.Middleware
-
-	if len(cfg.Server.IPBlockCIDRS) > 0 {
-		ipMw, err := middleware.IPFilter(logger, cfg.Server.IPBlockCIDRS)
-		if err != nil {
-			log.Fatalf("invalid ipBlockCIDRS: %v", err)
-		}
-		mws = append(mws, ipMw)
-	}
-
-	var handler http.Handler = engine
-	handler = middleware.Chain(handler, mws...)
-
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", metrics.Handler())
-	mux.Handle("/", handler)
-
-	srv := &http.Server{
-		Addr:    cfg.Server.Address,
-		Handler: mux,
-	}
-
-	go func() {
-		log.Printf("Listening on %s", srv.Addr)
-		if cfg.Server.TLS.Enabled {
-			if err := srv.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("server TLS error: %v", err)
+			scheme := "http"
+			if ls.TLS.Enabled {
+				scheme = "https"
 			}
-		} else {
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("server error: %v", err)
+
+			log.Printf("Listener %q starting on %s (%s)", ls.Name, ls.Server.Addr, scheme)
+
+			var err error
+			if ls.TLS.Enabled {
+				err = ls.Server.ListenAndServeTLS(ls.TLS.CertFile, ls.TLS.KeyFile)
+			} else {
+				err = ls.Server.ListenAndServe()
 			}
-		}
-	}()
+
+			if err != nil && err != http.ErrServerClosed {
+				log.Printf("Listener %q error: %v", ls.Name, err)
+			}
+		}(ls)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	<-stop
-	log.Println("Shutting down gracefully...")
+	log.Println("Shutting down listeners gracefully...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+	for _, ls := range listeners {
+		go func(s *http.Server) {
+			if err := s.Shutdown(ctx); err != nil {
+				log.Printf("server shutdown error: %v", err)
+			}
+		}(ls.Server)
 	}
+
+	wg.Wait()
+	log.Println("All listeners stopped")
 }

@@ -8,11 +8,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ListenerConfig struct {
+	Name       string    `yaml:"name"`
+	Address    string    `yaml:"address"`
+	TLS        TLSConfig `yaml:"tls"`
+	RedirectTo string    `yaml:"redirectTo,omitempty"`
+}
+
 type Config struct {
-	Server   ServerConfig    `yaml:"server"`
-	Cache    CacheConfig     `yaml:"cache"`
-	Clusters []ClusterConfig `yaml:"clusters"`
-	Routes   []RouteConfig   `yaml:"routes"`
+	Server    ServerConfig     `yaml:"server"`
+	Cache     CacheConfig      `yaml:"cache"`
+	Clusters  []ClusterConfig  `yaml:"clusters"`
+	Routes    []RouteConfig    `yaml:"routes"`
+	Listeners []ListenerConfig `yaml:"listeners,omitempty"`
 }
 
 type ServerConfig struct {
