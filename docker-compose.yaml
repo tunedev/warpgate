@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  demo-backend:
+    image: golang:1.23-alpine
+    working_dir: /app
+    command: ["go", "run", "./hack/demo-backend"]
+    volumes:
+      - .:/app
+    ports:
+      - "9000:9000"
+
+  warpgate:
+    build: .
+    depends_on:
+      - demo-backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configs/warpgate.docker.yaml:/app/configs/warpgate.yaml:ro
+    command: ["--config", "/app/configs/warpgate.yaml"]

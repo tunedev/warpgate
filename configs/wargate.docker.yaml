@@ -1,0 +1,27 @@
+server:
+  address: ":8080"
+  tls:
+    enabled: false
+
+cache:
+  maxEntries: 1000
+  defaultTTL: 30s
+  maxBodyBytes: 1048576
+
+clusters:
+  - name: api_cluster
+    endpoints:
+      - "http://demo-backend:9000"
+    healthCheck:
+      path: "/health"
+      interval: 5s
+      timeout: 1s
+      unhealthyThreshold: 3
+      healthyThreshold: 1
+
+routes:
+  - name: api
+    pathPrefix: "/api"
+    cluster: "api_cluster"
+    cache:
+      enabled: false
